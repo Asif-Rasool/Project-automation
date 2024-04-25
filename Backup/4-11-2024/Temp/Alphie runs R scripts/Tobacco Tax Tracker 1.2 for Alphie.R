@@ -1,0 +1,441 @@
+# ---
+# title: "TRD's Tobacco Tax Tracker | Version: 1.2"
+# author: 
+#   - Asif Rasool^[Senior Economist, 
+#     Tax Analysis, Research & Statistics, 
+#     Office of the Secretary, 
+#     New Mexico Taxation & Revenue Department, 
+#     last updated APr 01, 2024,
+#     asif.rasool@tax.nm.gov, 
+#      ]
+# 
+# date: March 29, 2024
+# 
+# output: 
+#   html_document:
+#     toc: true
+#     toc_float: true
+#     theme: cerulean
+# ---
+
+# Loading required packages
+
+gc()
+
+suppressPackageStartupMessages(library(knitr)) 
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(openxlsx))
+suppressPackageStartupMessages(library(writexl))
+suppressPackageStartupMessages(library(readxl))
+
+suppressPackageStartupMessages(library(DBI))
+suppressPackageStartupMessages(library(odbc))
+suppressPackageStartupMessages(library(openxlsx))
+
+suppressPackageStartupMessages(library(lubridate))
+
+
+
+# Running SQL query
+
+# Set up the connection parameters
+server <- 'GenSQLreport,2187'
+database <- 'master'
+driver <- 'ODBC Driver 17 for SQL Server'  # Update the driver if necessary
+
+# Set up the connection string with Windows authentication
+conn_str <- paste0('Driver=', driver, ';Server=', server, ';Database=', database, ';Trusted_Connection=yes')
+
+# Create a connection
+conn <- dbConnect(odbc::odbc(), .connection_string = conn_str)
+
+# Path to the .sql file
+sql_file <- "//trdecomsrv/H/Tobacco Tax/Data/Tobacco Tax Tracker/Input File/SQL Query_Tobacco Tax Products Returns with select variables.sql"
+
+# Read the .sql file
+sql_script <- readChar(sql_file, file.info(sql_file)$size)
+
+
+# Execute the SQL script
+dbExecute(conn, sql_script)
+# dbExecute(conn, paste(sql_script, collapse = "\n"))
+
+# Fetch the result set from tblNM_ReturnTpt joining tblReturn on flngDocKey
+result_query <- "SELECT DISTINCT t1.*, t2.fdtmFilingperiod
+                 FROM tblNM_ReturnTpt AS t1
+                 INNER JOIN tblReturn AS t2 ON t1.flngDocKey = t2.flngDocKey"
+
+
+
+result <- dbGetQuery(conn, result_query)
+
+# Save the result set as an .xlsx file
+xlsx_file <- "//trdecomsrv/H/Tobacco Tax/Data/Tobacco Tax Tracker/Input File/Tobacco Input File.xlsx"
+write.xlsx(result, xlsx_file, rowNames = FALSE)
+
+# Close the connection
+dbDisconnect(conn)
+
+
+# Loadng raw data (SQL output)
+
+df <- suppressWarnings({read_xlsx("//trdecomsrv/H/Tobacco Tax/Data/Tobacco Tax Tracker/Input File/Tobacco Input File.xlsx", sheet = "Sheet 1")})
+
+previous_month_first_day <- floor_date(Sys.Date(), "month") - days(1)
+df <- df %>% filter(fdtmFilingperiod > as.Date('2019-07-01'))
+df <- df %>% filter(fdtmFilingperiod < previous_month_first_day)
+df <- subset(df, !(fdtmFilingperiod == as.Date("2021-12-21")))
+
+
+
+# Prepartion of the excel workbook
+
+
+## Defning the formats
+
+OUT <- createWorkbook()
+LabelStyle <- createStyle(halign = "center",
+                          border = c("bottom", "right"), 
+                          borderStyle = "thin", 
+                          textDecoration = "bold", 
+                          fgFill = "#0491A1", 
+                          fontColour = "white")
+NumStyle <- createStyle(halign = "right", numFmt = "0.00")
+TextStyle <- createStyle(halign = "center", 
+                         border = "bottom", 
+                         borderStyle = "thin")
+
+DateStyle <- createStyle(halign = "center", numFmt = "mm-dd-yyyy")
+
+
+## Creating the worksheets
+
+addWorksheet(OUT, "Read Me")
+addWorksheet(OUT, "Cigars ($1.99 and under)")
+addWorksheet(OUT, "Cigars ($2.00 and over)")
+addWorksheet(OUT, "Little Cigars")
+addWorksheet(OUT, "E-Liquid")
+addWorksheet(OUT, "Closed System Cartridges")
+addWorksheet(OUT, "Other")
+
+
+# Processing Read Me sheet
+
+insertImage(OUT, "Read Me", "//trdecomsrv/H/Tobacco Tax/Data/Tobacco Tax Tracker/Input File/trdlogo.jpg" , startRow = 2, startCol = 2, width = 2, height = 1)
+freezePane(wb = OUT, sheet = "Read Me" , firstActiveRow = 35, firstCol = FALSE)
+
+insertImage(OUT, "Read Me", "//trdecomsrv/H/Tobacco Tax/Data/Tobacco Tax Tracker/Input File/ReadMe.png" , startRow = 7, startCol = 2, width = 4.141, height = 6)
+
+date <- Sys.Date()
+date <- format(as.POSIXct(date,format='%m/%d/%Y %H:%M:%S'),format='%m/%d/%Y')
+
+setColWidths(OUT, sheet = "Read Me", cols = 7, widths =10)
+writeData(wb=OUT, sheet = "Read Me", x = date, startCol = 7, startRow = 34)
+addStyle(OUT, sheet = "Read Me", style = LabelStyle, rows = 34, cols = 7, 
+         gridExpand = TRUE, stack = FALSE)
+
+
+
+# Processing Cigars ($1.99 and under)
+
+Cigars_1.99_and_under <- as.data.frame(df %>% select("fdtmFilingperiod", "fcurCheapCigarProdAcquired", 
+                                 "fcurCheapCigarOSSales","fcurCheapCigarExempt", 
+                                 "fcurCheapCigarTaxableValue", "fcurCheapCigarTotalTax"))
+
+
+## Calculating the summations
+
+Cigars_1.99_and_under <- as.data.frame(aggregate(cbind(fcurCheapCigarProdAcquired, 
+                                 fcurCheapCigarOSSales, fcurCheapCigarExempt, 
+                                 fcurCheapCigarTaxableValue, fcurCheapCigarTotalTax)~ fdtmFilingperiod, data=Cigars_1.99_and_under, FUN=sum));
+
+
+## Renaming the columns
+
+Cigars_1.99_and_under <- Cigars_1.99_and_under %>% rename(
+                            "Filing Period" = fdtmFilingperiod,
+                            "Cigars ($1.99 and under) Total Product Value Acquired"= fcurCheapCigarProdAcquired,
+                            "Cigar Deductions Value" = fcurCheapCigarOSSales,
+                            "Cigar  Exemptions Value" = fcurCheapCigarExempt,
+                            "Cigars Total Taxable Value" = fcurCheapCigarTaxableValue,
+                            "Cigar Tax ($)" = fcurCheapCigarTotalTax)
+
+
+## Formating and exporting to an Excel sheet
+
+setColWidths(OUT, sheet = "Cigars ($1.99 and under)", cols = 1:20, widths ="auto")
+freezePane(wb = OUT, sheet = "Cigars ($1.99 and under)" , firstRow = TRUE, firstCol = FALSE)
+
+writeData(wb = OUT, sheet = "Cigars ($1.99 and under)",x = Cigars_1.99_and_under, 
+          startCol = 1, startRow = 1, colNames = TRUE)
+addStyle(OUT, sheet = "Cigars ($1.99 and under)", style = LabelStyle, rows = 1, cols = 1:6, 
+         gridExpand = TRUE, stack = FALSE)
+addStyle(OUT, sheet = "Cigars ($1.99 and under)", style = DateStyle, cols = 1, rows = 2:1000,
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Cigars ($1.99 and under)", style = NumStyle, cols = 2, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Cigars ($1.99 and under)", style = NumStyle, cols = 3, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Cigars ($1.99 and under)", style = NumStyle, cols = 4, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Cigars ($1.99 and under)", style = NumStyle, cols = 5, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Cigars ($1.99 and under)", style = NumStyle, cols = 6, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+
+
+# Processing Cigars ($2.00 and above)
+
+Cigars_2.00_and_above <- as.data.frame(df %>% select("fdtmFilingperiod", "fcurCigarProdAcquired", 
+                                 "fcurCigarOSSales","fcurCigarExempt", 
+                                 "fcurCigarTaxableValue", "fcurCigarTotalTax"))
+
+
+## Calculating the summations
+
+Cigars_2.00_and_above <- as.data.frame(aggregate(cbind(fcurCigarProdAcquired, 
+                                 fcurCigarOSSales, fcurCigarExempt, 
+                                 fcurCigarTaxableValue, fcurCigarTotalTax)~ fdtmFilingperiod, data=Cigars_2.00_and_above, FUN=sum));
+
+
+## Renaming the columns
+
+Cigars_2.00_and_above <- Cigars_2.00_and_above %>% rename(
+                            "Filing Period" = fdtmFilingperiod,
+                            "Cigars ($2.00 and over) Total Number Acquired"= fcurCigarProdAcquired,
+                            "Cigar Deductions Units" = fcurCigarOSSales,
+                            "Cigar Exemptions Units" = fcurCigarExempt,
+                            "Cigars Taxable Units sold" = fcurCigarTaxableValue,
+                            "Cigar Tax ($)" = fcurCigarTotalTax)
+
+
+## Formating and exporting to an Excel sheet
+
+setColWidths(OUT, sheet = "Cigars ($2.00 and over)", cols = 1:20, widths ="auto")
+freezePane(wb = OUT, sheet = "Cigars ($2.00 and over)" , firstRow = TRUE, firstCol = FALSE)
+
+writeData(wb = OUT, sheet = "Cigars ($2.00 and over)",x = Cigars_2.00_and_above, 
+          startCol = 1, startRow = 1, colNames = TRUE)
+addStyle(OUT, sheet = "Cigars ($2.00 and over)", style = LabelStyle, rows = 1, cols = 1:6, 
+         gridExpand = TRUE, stack = FALSE)
+addStyle(OUT, sheet = "Cigars ($2.00 and over)", style = DateStyle, cols = 1, rows = 2:1000,
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Cigars ($2.00 and over)", style = NumStyle, cols = 2, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Cigars ($2.00 and over)", style = NumStyle, cols = 3, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Cigars ($2.00 and over)", style = NumStyle, cols = 4, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Cigars ($2.00 and over)", style = NumStyle, cols = 5, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Cigars ($2.00 and over)", style = NumStyle, cols = 6, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+
+
+# Processing Little Cigars
+
+Little_cigars <- as.data.frame(df %>% select("fdtmFilingperiod", "flngLittleCigarProdAcquired", 
+                                 "flngLittleCigarOSSales","flngLittleCigarExempt", 
+                                 "flngLittleCigarTaxableValue", "fcurLittleCigarTotalTax"))
+
+
+## Calculating the summations
+
+Little_cigars <- as.data.frame(aggregate(cbind(flngLittleCigarProdAcquired, 
+                                 flngLittleCigarOSSales, flngLittleCigarExempt, 
+                                 flngLittleCigarTaxableValue, fcurLittleCigarTotalTax)~ fdtmFilingperiod, data=Little_cigars, FUN=sum));
+
+
+## Renaming the columns
+
+Little_cigars <- Little_cigars %>% rename(
+                            "Filing Period" = fdtmFilingperiod,
+                            "Little Cigars Total Number Acquired"= flngLittleCigarProdAcquired,
+                            "Little Cigar Deductions Units" = flngLittleCigarOSSales,
+                            "Little Cigar Exemptions Units" = flngLittleCigarExempt,
+                            "Little Cigars Taxable Units sold" = flngLittleCigarTaxableValue,
+                            "Little Cigar Tax ($)" = fcurLittleCigarTotalTax)
+
+
+## Formating and exporting to an Excel sheet
+
+setColWidths(OUT, sheet = "Little Cigars", cols = 1:20, widths ="auto")
+freezePane(wb = OUT, sheet = "Little Cigars" , firstRow = TRUE, firstCol = FALSE)
+
+writeData(wb = OUT, sheet = "Little Cigars", x = Little_cigars, 
+          startCol = 1, startRow = 1, colNames = TRUE)
+addStyle(OUT, sheet = "Little Cigars", style = LabelStyle, rows = 1, cols = 1:6, 
+         gridExpand = TRUE, stack = FALSE)
+addStyle(OUT, sheet = "Little Cigars", style = DateStyle, cols = 1, rows = 2:1000,
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Little Cigars", style = NumStyle, cols = 2, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Little Cigars", style = NumStyle, cols = 3, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Little Cigars", style = NumStyle, cols = 4, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Little Cigars", style = NumStyle, cols = 5, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Little Cigars", style = NumStyle, cols = 6, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+
+
+# Processing E-Liquid
+
+E_liquid <- as.data.frame(df %>% select("fdtmFilingperiod", "fcurELiquidProdAcquired", 
+                                 "fcurELiquidOSSales","fcurELiquidExempt", 
+                                 "fcurELiquidTaxableValue", "fcurELiquidTotalTax"))
+
+
+## Calculating the summations
+
+E_liquid <- as.data.frame(aggregate(cbind(fcurELiquidProdAcquired, 
+                                 fcurELiquidOSSales, fcurELiquidExempt, 
+                                 fcurELiquidTaxableValue, fcurELiquidTotalTax)~ fdtmFilingperiod, data=E_liquid, FUN=sum));
+
+
+## Renaming the columns
+
+E_liquid <- E_liquid %>% rename(
+  "Filing Period" = fdtmFilingperiod,
+  "E-Liquid Total Product Value Acquired" = fcurELiquidProdAcquired,
+  "E-Liquid Deductions Value" = fcurELiquidOSSales,
+  "E-Liquid Exemptions Value" = fcurELiquidExempt,
+  "E-Liquid Total Taxable Value" = fcurELiquidTaxableValue,
+  "E-Liquid Tax ($)" = fcurELiquidTotalTax
+)
+
+
+
+## Formating and exporting to an Excel sheet
+
+setColWidths(OUT, sheet = "E-Liquid", cols = 1:20, widths ="auto")
+freezePane(wb = OUT, sheet = "E-Liquid" , firstRow = TRUE, firstCol = FALSE)
+
+writeData(wb = OUT, sheet = "E-Liquid", x = E_liquid, 
+          startCol = 1, startRow = 1, colNames = TRUE)
+addStyle(OUT, sheet = "E-Liquid", style = LabelStyle, rows = 1, cols = 1:6, 
+         gridExpand = TRUE, stack = FALSE)
+addStyle(OUT, sheet = "E-Liquid", style = DateStyle, cols = 1, rows = 2:1000,
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "E-Liquid", style = NumStyle, cols = 2, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "E-Liquid", style = NumStyle, cols = 3, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "E-Liquid", style = NumStyle, cols = 4, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "E-Liquid", style = NumStyle, cols = 5, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "E-Liquid", style = NumStyle, cols = 6, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+
+
+# Processing Closed System Cartridges
+
+csc <- as.data.frame(df %>% select("fdtmFilingperiod", "flngCSCProdAcquired", 
+                                 "flngCSCOSSales","flngCSCExempt", 
+                                 "flngCSCTaxableValue", "fcurCSCTotalTax"))
+
+
+## Calculating the summations
+
+csc <- as.data.frame(aggregate(cbind(flngCSCProdAcquired, 
+                                 flngCSCOSSales,flngCSCExempt, 
+                                 flngCSCTaxableValue, fcurCSCTotalTax)~ fdtmFilingperiod, data=csc, FUN=sum));
+
+
+## Renaming the columns
+
+csc <- csc %>% rename(
+  "Filing Period" = fdtmFilingperiod,
+  "Closed System Cartridges Total Number Acquired" = flngCSCProdAcquired,
+  "Closed System Cartridges Deductions Units" = flngCSCOSSales,
+  "Closed System Cartridges Exemptions Units" = flngCSCExempt,
+  "Closed System Cartridges Taxable Units sold" = flngCSCTaxableValue,
+  "Closed System Cartridges Tax ($)" = fcurCSCTotalTax
+)
+
+
+## Formating and exporting to an Excel sheet
+
+setColWidths(OUT, sheet = "Closed System Cartridges", cols = 1:20, widths ="auto")
+freezePane(wb = OUT, sheet = "Closed System Cartridges" , firstRow = TRUE, firstCol = FALSE)
+
+writeData(wb = OUT, sheet = "Closed System Cartridges", x = csc, 
+          startCol = 1, startRow = 1, colNames = TRUE)
+addStyle(OUT, sheet = "Closed System Cartridges", style = LabelStyle, rows = 1, cols = 1:6, 
+         gridExpand = TRUE, stack = FALSE)
+addStyle(OUT, sheet = "Closed System Cartridges", style = DateStyle, cols = 1, rows = 2:1000,
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Closed System Cartridges", style = NumStyle, cols = 2, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Closed System Cartridges", style = NumStyle, cols = 3, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Closed System Cartridges", style = NumStyle, cols = 4, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Closed System Cartridges", style = NumStyle, cols = 5, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Closed System Cartridges", style = NumStyle, cols = 6, rows = 2:1000, 
+         gridExpand = FALSE, stack = FALSE)
+
+
+# Processing Other
+
+other <- as.data.frame(df %>% select("fdtmFilingperiod", "fcurOtherProdAcquired", 
+                                 "fcurOtherOSSales","fcurOtherExempt", 
+                                 "fcurOtherTaxableValue", "fcurOtherTotalTax"))
+
+
+## Calculating the summations
+
+other <- as.data.frame(aggregate(cbind(fcurOtherProdAcquired, 
+                                 fcurOtherOSSales, fcurOtherExempt, 
+                                 fcurOtherTaxableValue, fcurOtherTotalTax)~ fdtmFilingperiod, data=other, FUN=sum));
+
+
+## Renaming the columns
+
+other <- other %>% rename(
+  "Filing Period" = fdtmFilingperiod,
+  "Other Total Product Value Acquired" = fcurOtherProdAcquired,
+  "Other Deductions Value" = fcurOtherOSSales,
+  "Other Exemptions Value" = fcurOtherExempt,
+  "Other Total Taxable Value" = fcurOtherTaxableValue,
+  "Other Tax ($)" = fcurOtherTotalTax
+)
+
+
+
+## Formating and exporting to an Excel sheet
+
+setColWidths(OUT, sheet = "Other", cols = 1:20, widths = "auto")
+freezePane(wb = OUT, sheet = "Other", firstRow = TRUE, firstCol = FALSE)
+
+writeData(wb = OUT, sheet = "Other", x = other,
+          startCol = 1, startRow = 1, colNames = TRUE)
+addStyle(OUT, sheet = "Other", style = LabelStyle, rows = 1, cols = 1:6,
+         gridExpand = TRUE, stack = FALSE)
+addStyle(OUT, sheet = "Other", style = DateStyle, cols = 1, rows = 2:1000,
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Other", style = NumStyle, cols = 2, rows = 2:1000,
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Other", style = NumStyle, cols = 3, rows = 2:1000,
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Other", style = NumStyle, cols = 4, rows = 2:1000,
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Other", style = NumStyle, cols = 5, rows = 2:1000,
+         gridExpand = FALSE, stack = FALSE)
+addStyle(OUT, sheet = "Other", style = NumStyle, cols = 6, rows = 2:1000,
+         gridExpand = FALSE, stack = FALSE)
+
+
+# Saving the excel workbook
+
+saveWorkbook(OUT, "//trdecomsrv/H/Tobacco Tax/Data/Tobacco Tax Tracker/Output/TRD Tobacco Tax Tracker v.1.2.xlsx", overwrite = TRUE)
+
+
+
+
+
+
+

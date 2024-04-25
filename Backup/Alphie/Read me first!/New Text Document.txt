@@ -1,0 +1,12 @@
+cmd ->
+
+pip install nbopen
+python -m nbopen.install_win
+
+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
+
+
+C:\Users\asifr\AppData\Roaming\Python\Python311\Scripts
+
+!pip install jupyter_ai
+
